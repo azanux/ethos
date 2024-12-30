@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
+
 import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import { AccessControl } from "./utils/AccessControl.sol";
 import { ETHOS_PROFILE } from "./utils/Constants.sol";
@@ -49,6 +50,7 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
 
   using Math for uint256;
   // --- Structs ---
+
   struct Market {
     uint256[2] votes;
     uint256 basePrice;
@@ -56,6 +58,7 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
   }
 
   struct MarketInfo {
+    //@audit check if synchronized with Market
     uint256 profileId;
     uint256 trustVotes;
     uint256 distrustVotes;
@@ -93,6 +96,7 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
     uint256 lastUpdateBlock;
   }
   // --- Constants ---
+
   uint256 public constant DEFAULT_PRICE = 0.01 ether;
   uint256 public constant MINIMUM_BASE_PRICE = 0.0001 ether;
   uint256 private constant TRUST = 1;
@@ -121,11 +125,11 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
   // profileId => isPositive => votes
   mapping(uint256 => Market) private markets;
   // profileId => funds currently invested in each market
-  mapping(uint256 => uint256) public marketFunds;
+  mapping(uint256 => uint256) public marketFunds; //  @audit chek if we update this part when er add or retire fund , sel , buy
   // profileId => graduated (markets that have graduated)
-  mapping(uint256 => bool) public graduatedMarkets;
+  mapping(uint256 => bool) public graduatedMarkets; //@audit chek if we update this part when we graduate a market
   // profileId => MarketUpdateInfo
-  mapping(uint256 => MarketUpdateInfo) public lastMarketUpdates;
+  mapping(uint256 => MarketUpdateInfo) public lastMarketUpdates; //@audit check if we update when update market
   // msg.sender => profileId => isPositive => votes
   mapping(address => mapping(uint256 => Market)) private votesOwned;
   // profileId => participant address
@@ -285,12 +289,14 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
     uint256 senderProfileId = _getProfileIdForAddress(msg.sender);
 
     // Verify sender can create market
-    if (enforceCreationAllowList && !creationAllowedProfileIds[senderProfileId])
+    if (enforceCreationAllowList && !creationAllowedProfileIds[senderProfileId]) {
+      //@audit suspet
       revert MarketCreationUnauthorized(
         MarketCreationErrorCode.PROFILE_NOT_AUTHORIZED,
         msg.sender,
         senderProfileId
       );
+    }
 
     _createMarket(senderProfileId, msg.sender, marketConfigIndex);
   }
@@ -321,12 +327,14 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
     uint256 marketConfigIndex
   ) private nonReentrant {
     // ensure a market doesn't already exist for this profile
-    if (markets[profileId].votes[TRUST] != 0 || markets[profileId].votes[DISTRUST] != 0)
+    if (markets[profileId].votes[TRUST] != 0 || markets[profileId].votes[DISTRUST] != 0) {
       revert MarketAlreadyExists(profileId);
+    }
 
     // ensure the specified config option is valid
-    if (marketConfigIndex >= marketConfigs.length)
+    if (marketConfigIndex >= marketConfigs.length) {
       revert InvalidMarketConfigOption("Invalid config index");
+    }
 
     uint256 creationCost = marketConfigs[marketConfigIndex].creationCost;
 
@@ -335,7 +343,7 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
       if (msg.value < creationCost) revert InsufficientLiquidity(creationCost);
       marketFunds[profileId] = creationCost;
       if (msg.value > creationCost) {
-        _sendEth(msg.value - creationCost);
+        _sendEth(msg.value - creationCost); //@audit rentrency chek
       }
     } else {
       // when an admin creates a market, there is no minimum creation cost; use whatever they sent
@@ -555,7 +563,7 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
       revert SellSlippageLimitExceeded(minimumVotePrice, pricePerVote);
     }
 
-    markets[profileId].votes[isPositive ? TRUST : DISTRUST] -= votesToSell;
+    markets[profileId].votes[isPositive ? TRUST : DISTRUST] -= votesToSell; //@audit we have a problem here
     votesOwned[msg.sender][profileId].votes[isPositive ? TRUST : DISTRUST] -= votesToSell;
     // tally market funds
     marketFunds[profileId] -= proceedsBeforeFees;
@@ -600,8 +608,9 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
     uint256 votesAvailable = votesOwned[msg.sender][profileId].votes[isPositive ? TRUST : DISTRUST];
     if (votesToSell > votesAvailable) revert InsufficientVotesOwned(profileId, msg.sender);
 
-    if (market.votes[isPositive ? TRUST : DISTRUST] < votesToSell)
+    if (market.votes[isPositive ? TRUST : DISTRUST] < votesToSell) {
       revert InsufficientVotesToSell(profileId);
+    }
 
     // determine the proceeds from the sale
     proceedsBeforeFees = _calcCost(market, isPositive, false, votesToSell);
@@ -625,8 +634,9 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
     if (newRecipient == address(0)) revert ZeroAddress();
 
     // if the new donation recipient has a balance, do not allow overwriting
-    if (donationEscrow[newRecipient] != 0)
+    if (donationEscrow[newRecipient] != 0) {
       revert InvalidMarketConfigOption("Donation recipient has balance");
+    }
 
     // Ensure the sender is the current donation recipient
     if (msg.sender != donationRecipient[profileId]) revert InvalidProfileId();
@@ -670,8 +680,9 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
    * @param basisPoints The new donation percentage in basis points, maximum 500 (5%)
    */
   function setDonationBasisPoints(uint256 basisPoints) public onlyAdmin whenNotPaused {
-    if (basisPoints > MAX_DONATION_BASIS_POINTS)
+    if (basisPoints > MAX_DONATION_BASIS_POINTS) {
       revert InvalidMarketConfigOption("Donation exceeds maximum");
+    }
 
     donationBasisPoints = basisPoints;
   }
@@ -683,8 +694,9 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
   function setEntryProtocolFeeBasisPoints(uint256 basisPoints) public onlyAdmin whenNotPaused {
     // must specify a protocol fee address before enabling entry fees
     if (protocolFeeAddress == address(0)) revert ZeroAddress();
-    if (basisPoints > MAX_PROTOCOL_FEE_BASIS_POINTS)
+    if (basisPoints > MAX_PROTOCOL_FEE_BASIS_POINTS) {
       revert InvalidMarketConfigOption("Fee exceeds maximum");
+    }
 
     entryProtocolFeeBasisPoints = basisPoints;
   }
@@ -696,8 +708,9 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
   function setExitProtocolFeeBasisPoints(uint256 basisPoints) public onlyAdmin whenNotPaused {
     // must specify a protocol fee address before enabling exit fees
     if (protocolFeeAddress == address(0)) revert ZeroAddress();
-    if (basisPoints > MAX_PROTOCOL_FEE_BASIS_POINTS)
+    if (basisPoints > MAX_PROTOCOL_FEE_BASIS_POINTS) {
       revert InvalidMarketConfigOption("Fee exceeds maximum");
+    }
 
     exitProtocolFeeBasisPoints = basisPoints;
   }
@@ -1063,8 +1076,9 @@ contract ReputationMarket is AccessControl, UUPSUpgradeable, ReentrancyGuard, IT
    * @param profileId The profile ID to check
    */
   function _checkMarketExists(uint256 profileId) private view {
-    if (markets[profileId].votes[TRUST] == 0 && markets[profileId].votes[DISTRUST] == 0)
+    if (markets[profileId].votes[TRUST] == 0 && markets[profileId].votes[DISTRUST] == 0) {
       revert MarketDoesNotExist(profileId);
+    }
   }
 
   /* @notice Gets interface for interacting with Ethos Profile system

@@ -3,6 +3,6 @@
 pragma solidity 0.8.26;
 
 struct AttestationDetails {
-  string account;
-  string service;
+    string account;
+    string service;
 }

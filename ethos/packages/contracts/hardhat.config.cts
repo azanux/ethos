@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import '@nomicfoundation/hardhat-toolbox';
 import '@nomicfoundation/hardhat-verify';
+import "@nomicfoundation/hardhat-foundry";
 import '@openzeppelin/hardhat-upgrades';
 import 'dotenv/config';
 import { TASK_COMPILE_SOLIDITY } from 'hardhat/builtin-tasks/task-names';
